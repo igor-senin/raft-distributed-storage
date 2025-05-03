@@ -57,12 +57,20 @@ func main() {
 	// }
 	// fmt.Printf("Last record: key=%d, val=%d\n", key, val)
 
-	cli.InitCommandLine()
+	var err error = nil
+
+	err = cli.InitCommandLine()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	err = storage.InitStorage()
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	http.HandleFunc("/", handleRoot)
 	http.HandleFunc("/resource", handleResource)
-
-	storage.InitStorage()
 
 	addr := "0.0.0.0:8786"
 	fmt.Println("Listening on", addr)

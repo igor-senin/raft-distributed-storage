@@ -7,8 +7,9 @@ type (
 
 var storage map[TKey]TValue
 
-func InitStorage() {
+func InitStorage() error {
 	storage = make(map[TKey]TValue)
+	return nil
 }
 
 func ReadRecord(key TKey) (TValue, bool) {

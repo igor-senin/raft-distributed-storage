@@ -1,5 +1,7 @@
 package raft
 
+import "time"
+
 var (
 	TermNumber  int64
 	VotedFor    int64
@@ -12,3 +14,17 @@ var (
 	NextIndex  []int64 // for each node index of the next log entry to send to that server
 	MatchIndex []int64 // for each node index of the log entry server knows is commited on that node
 )
+
+var (
+	IsLeader    bool
+	ClusterSize int
+	Idx         int
+)
+
+func MainCycle() {
+	var timer time.Timer
+
+	select {
+	case <-timer.C:
+	}
+}
