@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 
+set -e
+
 IMAGE="raft-replica-node"
 BASE_NAME="replica-node"
 NETWORK_NAME="clusternet"
@@ -8,6 +10,7 @@ HOST_BASE_PORT=8000
 REPLICA_COUNT=6
 IP_BASE="172.18.0"
 OCTET_BASE=10
+BASE_IP_ADDR="${IP_BASE}.${OCTET_BASE}"
 SUBNET="${IP_BASE}.0/16"
 
 docker network inspect "$NETWORK_NAME" > /dev/null 2>&1 || \
@@ -20,6 +23,11 @@ do
   IP_LAST_OCTET=$(( OCTET_BASE + i ))
   IP="${IP_BASE}.${IP_LAST_OCTET}"
 
+  case "$i" in
+    "0") IS_LEADER="--leader"
+      *) IS_LEADER=""
+  esac
+
   echo "Starting ${NAME} on port ${HOST_PORT}..."
 
   docker container run \
@@ -28,5 +36,6 @@ do
     --network "${NETWORK_NAME}" \
     --ip="${IP}" \
     -p "${HOST_PORT}:${INTERNAL_PORT}" \
-    "${IMAGE}"
+    "${IMAGE}" \
+      --clusterSize="${REPLICA_COUNT}" --idx="${i}" --baseAddr="${BASE_IP_ADDR}" "${IS_LEADER}"
 done
