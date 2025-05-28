@@ -15,7 +15,7 @@ import (
 func InitCommandLine() error {
 	log.Println("[Init CLI]")
 
-	flag.IntVar(&raft.ClusterSize, "clusterSize", 1, "total amount of replicas in raft group")
+	flag.Int64Var(&raft.ClusterSize, "clusterSize", 1, "total amount of replicas in raft group")
 	flag.Int64Var(&raft.Idx, "idx", 0, "index of this replica in range [0, clusterSize)")
 	flag.BoolVar(&raft.IsLeader, "leader", false, "true if replica starts as leader")
 	flag.StringVar(&net_subsys.BaseIPAddr, "baseAddr", "0.0.0.0", "base IP address for all replicas")

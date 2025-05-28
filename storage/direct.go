@@ -11,7 +11,7 @@ import (
 )
 
 var (
-	Filename string = "log_raft.bin"
+	Filename string = "/opt/volume/log_raft.bin"
 	file     *os.File
 )
 
@@ -24,8 +24,8 @@ var magicEntry OnDiskEntry = OnDiskEntry{
 var nextToApplyIndex int64 /*index of next record to be applied*/
 
 type OnDiskHeader struct {
-	version      int64 /**/
-	appliedIndex int64 /*index of last applied record*/
+	Version      int64 /**/
+	AppliedIndex int64 /*index of last applied record*/
 }
 
 type OnDiskEntry struct {
@@ -53,8 +53,8 @@ func entryApplied() error {
 	nextToApplyIndex += 1
 
 	new_header := OnDiskHeader{
-		version:      1,
-		appliedIndex: nextToApplyIndex,
+		Version:      1,
+		AppliedIndex: nextToApplyIndex,
 	}
 	err := directUpdateHeader(new_header)
 	if err != nil {
@@ -169,8 +169,8 @@ func clearAndInitFile(file_ptr *os.File) error {
 	}
 
 	header := OnDiskHeader{
-		version:      1,
-		appliedIndex: 1,
+		Version:      1,
+		AppliedIndex: 1,
 	}
 	err = binary.Write(file_ptr, binary.LittleEndian, header)
 	if err != nil {

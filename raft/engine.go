@@ -25,7 +25,7 @@ var (
 	CommitIndex int64 // index of highest log entry known to be committed
 )
 
-// Server state
+// Leader state
 var (
 	NextIndex  []int64 // for each node index of the next log entry to send to that server
 	MatchIndex []int64 // for each node index of the log entry server knows is commited on that node
@@ -33,7 +33,8 @@ var (
 
 var (
 	IsLeader    bool
-	ClusterSize int
+	ClusterSize int64
+	QuorumSize  int64
 	Idx         int64
 )
 
@@ -42,20 +43,28 @@ var (
 	AEChannel        chan bool
 	RVChannel        chan bool
 	ClientAPIChannel chan FromClientLogEntry
+	GrantsChannel    chan RequestVoteResponse
 )
 
 const (
-	IdleTO          = 5 * time.Second       // time after which we start new elections, if old leader had not ping us
-	AppendEntriesTO = 50 * time.Millisecond // time that we wait for response in `AppendEntries`
-	RequestVoteTO   = 1 * time.Second       // time that we wait for grants in `runElections`
-	HeartbitTO      = 2 * time.Second       // time after which leader sends heartbit
+	IdleTO          = 5 * time.Second        // time after which we start new elections, if old leader had not ping us
+	RequestVoteTO   = 1 * time.Second        // time that we wait for grants in `runElections`
+	AppendEntriesTO = 500 * time.Millisecond // time that leader waits for other hosts to confirm they appended entries
+	HeartbitTO      = 2 * time.Second        // time after which leader sends heartbit
 )
 
 func initRaft() {
 	AEChannel = make(chan bool)
 	RVChannel = make(chan bool)
 	ClientAPIChannel = make(chan FromClientLogEntry)
+	GrantsChannel = make(chan RequestVoteResponse, ClusterSize)
 
+	NextIndex = make([]int64, ClusterSize)
+	for i := range ClusterSize {
+		NextIndex[i] = 1
+	}
+
+	QuorumSize = ClusterSize/2 + 1
 	TermNumber = 0
 	VotedFor = -1
 	CommitIndex = 0
@@ -70,12 +79,12 @@ func RunRaft() {
 
 			LeaderRoutine()
 
-			// Exit, because other hosts no longer consider us as leader,
+			// Exited, because other hosts no longer consider us as leader,
 			// and we received heartbit from new leader with greater `TermNumber`.
 		} else {
 			FollowerRoutine()
 
-			// Exit, because need to start new elections cycle.
+			// Exited, because need to start new elections cycle.
 			TermNumber += 1
 
 			// Election cycle. Convenient to put infinite cycle right here.
@@ -86,7 +95,7 @@ func RunRaft() {
 }
 
 func runElections() bool {
-	grantsThreshold := ClusterSize / 2
+	grantsThreshold := QuorumSize - 1 // -1 for ourself
 	// ClusterSize = 2k+1 => grantsThreshold = k ; k + 1 - majority
 	// ClusterSize = 2k => grantsThreshold = k ; k + 1 - majority
 	jitter := time.Duration(rand.Int63n(int64(time.Second)))
@@ -95,8 +104,6 @@ func runElections() bool {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	results := make(chan RequestVoteResponse, ClusterSize)
-
 	for i := range ClusterSize {
 		dstId := int64(i)
 		if dstId == Idx {
@@ -104,21 +111,17 @@ func runElections() bool {
 		}
 
 		go func(dstId int64) {
-			response, err := RequestVote(dstId, timeout)
-			if err != nil {
-				log.Printf("[INFO] [broadcastRequestVote] i: %d; error: %v\n", i, err)
-			}
-
-			results <- response
+			response, _ := RequestVote(dstId, timeout)
+			GrantsChannel <- response
 		}(dstId)
 	}
 
 	// Try to collect votes.
-	granted := 0
+	granted := int64(0)
 outer:
 	for range ClusterSize {
 		select {
-		case res := <-results:
+		case res := <-GrantsChannel:
 			// If some host has newer Term, stop gathering votes.
 			// Return false as sign that we should stop elections and continue `FollowerRoutine`.
 			if res.Term > TermNumber {
@@ -141,10 +144,14 @@ outer:
 		}
 	}
 
+	// If received enough grants, we set `IsLeader` to true (so LeaderRoutine will start).
+	// Return false because we need to stop elections.
 	if granted >= grantsThreshold {
 		IsLeader = true
+		return false
 	}
 
+	// Continue elections.
 	return true
 }
 
@@ -162,10 +169,12 @@ func handleClientRequest(_ FromClientLogEntry, status string) {
 
 func FollowerRoutine() {
 	jitter := time.Duration(rand.Int63n(int64(time.Second)))
-	ticker := time.NewTicker(IdleTO + jitter)
+
+	timeToTick := jitter + IdleTO
+	ticker := time.NewTicker(timeToTick)
 
 	for {
-		jitter = time.Duration(rand.Int63n(int64(time.Second)))
+		timeToTick = IdleTO + time.Duration(rand.Int63n(int64(time.Second)))
 		select {
 		case <-ticker.C:
 			log.Println("[INFO] [follower] tick expired")
@@ -173,7 +182,7 @@ func FollowerRoutine() {
 			return
 		case <-AEChannel:
 			handleAppendEntries("follower")
-			ticker.Reset(IdleTO + jitter)
+			ticker.Reset(timeToTick)
 		case <-RVChannel:
 			handleRequestVote("follower")
 		case entry := <-ClientAPIChannel:

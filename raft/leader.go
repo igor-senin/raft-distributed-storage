@@ -32,7 +32,7 @@ func AppendEntries(
 		return AppendEntriesResponse{}, err
 	}
 
-	defer resp.Body.Close() // TODO: для чего?
+	defer resp.Body.Close()
 
 	log.Println("[DEBUG] [AppendEntries] status =", resp.Status)
 
@@ -61,7 +61,7 @@ func RequestVote(dstId int64, timeout time.Duration) (RequestVoteResponse, error
 		return RequestVoteResponse{}, err
 	}
 
-	defer resp.Body.Close() // TODO: для чего?
+	defer resp.Body.Close()
 
 	log.Println("[DEBUG] [RequestVote] status =", resp.Status)
 

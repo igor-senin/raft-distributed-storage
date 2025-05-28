@@ -1,6 +1,7 @@
 package raft
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"log"
@@ -106,7 +107,8 @@ func AppendEntriesStub(payload AppendEntriesPayload) AppendEntriesResponse {
 		}
 
 		// ... or apply this entry.
-		err = storage.HandleEntry(entry.LogEntry, entry.Term)
+		_ = storage.HandleEntry(entry.LogEntry, entry.Term)
+		// TODO: handle err above
 	}
 
 	// Logic for follower to commit entries.
@@ -131,6 +133,7 @@ func RequestVoteStub(payload RequestVotePayload) RequestVoteResponse {
 	candidateId := payload.CandidateId
 	candidatesLastLogIdx := payload.LastLogIndex
 	candidatesLastLogTerm := payload.LastLogTerm
+
 	if IsLeader ||
 		TermNumber > candidatesTerm ||
 		(TermNumber == candidatesTerm && VotedFor != candidateId && VotedFor != -1) {
@@ -142,11 +145,14 @@ func RequestVoteStub(payload RequestVotePayload) RequestVoteResponse {
 
 	// Check if candidate is fresh enough.
 	if checkCandidateLogUpToDate(candidatesLastLogIdx, candidatesLastLogTerm) {
+		log.Printf("[DEBUG] [RequestVoteStub] candidates log is up to date \n")
 		// Update current term number.
 		// If there are absent log entries, future leaders will catch up.
 		TermNumber = candidatesTerm
 		VotedFor = candidateId
 		response.VoteGranted = true
+	} else {
+		log.Printf("[DEBUG] [RequestVoteStub] BAAAAAD!!!!!!!!!! CANDIDATE BAAAAAAAAAAAD!!!!! \n")
 	}
 
 	RVChannel <- true
@@ -155,14 +161,113 @@ func RequestVoteStub(payload RequestVotePayload) RequestVoteResponse {
 }
 
 func checkCandidateLogUpToDate(candidateLogSize, candidateLogTerm int64) bool {
+	log.Printf("[DEBUG] [checkCandidateLogUpToDate] candidateLogSize = %d ; candidatesTerm = %d\n", candidateLogSize, candidateLogTerm)
 	myLogSize := storage.LogSize()
 	myLogTerm := storage.LogTerm()
+	log.Printf("[DEBUG] [checkCandidateLogUpToDate] myLogSize = %d ; myLogTerm = %d\n", myLogSize, myLogTerm)
 
 	if myLogTerm != candidateLogTerm {
 		return myLogTerm < candidateLogTerm
 	}
 
-	return myLogSize < candidateLogSize
+	return myLogSize <= candidateLogSize
+}
+
+// serveOneReplica sends the straggler replica `idx` new records.
+// Writes to channel `confirmChan`, if successfully updated replica.
+// Returns:
+//
+//	true, if we still can be leader
+//	false, if we received response with bigger term number than ours.
+func serveOneReplica(idx int64, confirmChan chan bool) bool {
+	entries := []LogEntry{}
+	log.Printf("[DEBUG] [broadcastAppendEntry] i: %d ; NextIndex[idx]: %d \n", idx, NextIndex[idx])
+	for n := NextIndex[idx]; n < storage.LogSize(); n += 1 {
+		onDisk, err := storage.LogGetNth(n)
+		if err != nil {
+			log.Printf("[INFO] [broadcastAppendEntry] error while reading %d'th record from log ; i: %d ; error: %v\n", n, idx, err)
+			return true
+		}
+		newEntry := LogEntry{
+			LogEntry: onDisk.Entry,
+			Term:     onDisk.LogTerm,
+		}
+		entries = append(entries, newEntry)
+	}
+
+	for {
+		prevLogIndex := NextIndex[idx] - 1
+		onDiskPrev, err := storage.LogGetNth(prevLogIndex)
+		if err != nil {
+			log.Printf("[INFO] [broadcastAppendEntry] error while reading %d'th record from log ; i: %d ; error: %v\n", prevLogIndex, idx, err)
+			return true
+		}
+		prevLogTerm := onDiskPrev.LogTerm
+		resp, err := AppendEntries(int64(idx), entries, prevLogIndex, prevLogTerm, AppendEntriesTO)
+		if err != nil {
+			log.Printf("[INFO] [broadcastAppendEntry] i: %d ; error: %v\n", idx, err)
+			return true
+		}
+		if resp.Term > TermNumber {
+			log.Printf("[INFO] [broadcastAppendEntry] i: %d has bigger term: %d > %d\n", idx, resp.Term, TermNumber)
+			return false
+		}
+
+		if resp.Accepted {
+			confirmChan <- true
+			NextIndex[idx] = storage.LogSize()
+			return true
+		}
+
+		// If not accepted, continue sending entries.
+		NextIndex[idx] -= 1
+
+		prevEntry := LogEntry{
+			LogEntry: onDiskPrev.Entry,
+			Term:     prevLogTerm,
+		}
+		entries = append([]LogEntry{prevEntry}, entries...)
+	}
+}
+
+type AsyncError struct{} // `AsyncError` tells client that cluster is in bad condition now and returns code 202.
+
+func (e *AsyncError) Error() string {
+	return "asynchronous commit of entry"
+}
+
+func broadcastAppendEntry() error {
+	confirmsChan := make(chan bool, ClusterSize)
+
+	for i := range ClusterSize {
+		if int64(i) == Idx {
+			continue
+		}
+
+		go serveOneReplica(i, confirmsChan)
+	}
+
+	timeout := AppendEntriesTO
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	for range QuorumSize {
+		select {
+		case <-confirmsChan:
+			continue
+		case <-ctx.Done():
+			return &AsyncError{}
+		}
+	}
+
+	// Quorum has been assembled. Can commit it now.
+	CommitIndex += 1
+	if err := storage.ApplyNextRecord(); err != nil {
+		log.Printf("[INFO] [broadcastAppendEntry] error occured in ApplyNextRecord: %v \n", err)
+		return err
+	}
+
+	return nil
 }
 
 // ----------------------
@@ -171,38 +276,51 @@ func checkCandidateLogUpToDate(candidateLogSize, candidateLogTerm int64) bool {
 
 // RedirectError describes error, that is used to tell client who is current leader.
 type RedirectError struct {
-	LeaderId int64
+	RedirectId int64
 }
 
 func (e *RedirectError) Error() string {
-	return fmt.Sprintf("redirect to id: %d", e.LeaderId)
+	return fmt.Sprintf("redirect to id: %d", e.RedirectId)
 }
 
 func ClientReadStub(key int64) (int64, bool) {
 	val, ok := storage.ReadRecord(storage.TKey(key))
+
 	return int64(val), ok
 }
 
 func ClientCreateStub(key int64, value int64) error {
 	if !IsLeader {
-		return &RedirectError{LeaderId: LeaderId}
+		return &RedirectError{RedirectId: LeaderId}
 	}
 
-	return storage.CreateRecord(storage.TKey(key), storage.TValue(value), TermNumber)
+	if err := storage.CreateRecord(storage.TKey(key), storage.TValue(value), TermNumber); err != nil {
+		return err
+	}
+
+	return broadcastAppendEntry()
 }
 
 func ClientUpdateStub(key int64, value int64) error {
 	if !IsLeader {
-		return &RedirectError{LeaderId: LeaderId}
+		return &RedirectError{RedirectId: LeaderId}
 	}
 
-	return storage.UpdateRecord(storage.TKey(key), storage.TValue(value), TermNumber)
+	if err := storage.UpdateRecord(storage.TKey(key), storage.TValue(value), TermNumber); err != nil {
+		return err
+	}
+
+	return broadcastAppendEntry()
 }
 
 func ClientDeleteStub(key int64) error {
 	if !IsLeader {
-		return &RedirectError{LeaderId: LeaderId}
+		return &RedirectError{RedirectId: LeaderId}
 	}
 
-	return storage.DeleteRecord(storage.TKey(key), TermNumber)
+	if err := storage.DeleteRecord(storage.TKey(key), TermNumber); err != nil {
+		return err
+	}
+
+	return broadcastAppendEntry()
 }

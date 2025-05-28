@@ -75,7 +75,7 @@ func HandleResource(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			var redirErr *raft.RedirectError
 			if errors.As(err, &redirErr) {
-				leaderIp, err := net_subsys.AddToIP(net_subsys.BaseIPAddr, redirErr.LeaderId)
+				leaderIp, err := net_subsys.AddToIP(net_subsys.BaseIPAddr, redirErr.RedirectId)
 				if err != nil {
 					http.Error(w, "unknown error in AddToIP", http.StatusInternalServerError)
 					return
@@ -84,6 +84,13 @@ func HandleResource(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusFound)
 				return
 			}
+
+			var asyncErr *raft.AsyncError
+			if errors.As(err, &asyncErr) {
+				w.WriteHeader(http.StatusAccepted)
+				return
+			}
+
 			http.Error(w, "unknown error in storage.Create", http.StatusInternalServerError)
 			return
 		}
@@ -108,7 +115,7 @@ func HandleResource(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			var redirErr *raft.RedirectError
 			if errors.As(err, &redirErr) {
-				leaderIp, err := net_subsys.AddToIP(net_subsys.BaseIPAddr, redirErr.LeaderId)
+				leaderIp, err := net_subsys.AddToIP(net_subsys.BaseIPAddr, redirErr.RedirectId)
 				if err != nil {
 					http.Error(w, "unknown error in AddToIP", http.StatusInternalServerError)
 					return
@@ -117,6 +124,13 @@ func HandleResource(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusFound)
 				return
 			}
+
+			var asyncErr *raft.AsyncError
+			if errors.As(err, &asyncErr) {
+				w.WriteHeader(http.StatusAccepted)
+				return
+			}
+
 			http.Error(w, "unknown error in storage.Update", http.StatusInternalServerError)
 			return
 		}
@@ -136,7 +150,7 @@ func HandleResource(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			var redirErr *raft.RedirectError
 			if errors.As(err, &redirErr) {
-				leaderIp, err := net_subsys.AddToIP(net_subsys.BaseIPAddr, redirErr.LeaderId)
+				leaderIp, err := net_subsys.AddToIP(net_subsys.BaseIPAddr, redirErr.RedirectId)
 				if err != nil {
 					http.Error(w, "unknown error in AddToIP", http.StatusInternalServerError)
 					return
@@ -145,6 +159,13 @@ func HandleResource(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusFound)
 				return
 			}
+
+			var asyncErr *raft.AsyncError
+			if errors.As(err, &asyncErr) {
+				w.WriteHeader(http.StatusAccepted)
+				return
+			}
+
 			http.Error(w, "unknown error in storage.Delete", http.StatusInternalServerError)
 			return
 		}
@@ -180,14 +201,12 @@ func HandleRPCAppendEntries(w http.ResponseWriter, r *http.Request) {
 
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
-	} else {
-		w.WriteHeader(http.StatusOK)
 	}
 }
 
 func HandleRPCRequestVote(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Only GET allowed in RequestVote", http.StatusMethodNotAllowed)
+	if r.Method != http.MethodPost {
+		http.Error(w, "Only POST allowed in RequestVote", http.StatusMethodNotAllowed)
 		return
 	}
 
@@ -198,15 +217,11 @@ func HandleRPCRequestVote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fmt.Println("POST body was: ", payload)
-
 	response := raft.RequestVoteStub(payload)
 
 	w.Header().Set("Content-Type", "application/json")
 
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
-	} else {
-		w.WriteHeader(http.StatusOK)
 	}
 }

@@ -20,7 +20,7 @@ func LogTerm() int64 {
 }
 
 func LogGetNth(n int64) (OnDiskEntry, error) {
-	if LogSize() < n {
+	if LogSize() <= n {
 		return OnDiskEntry{}, io.EOF
 	}
 

@@ -55,7 +55,7 @@ func InitStorage() error {
 	}
 	log.Printf("[DEBUG] [Init Storage] header: %v\n", header)
 	log.Println("[INFO] [Init Storage] log replay")
-	err = replayLog(header.appliedIndex)
+	err = replayLog(header.AppliedIndex)
 	if err != nil {
 		return err
 	}
